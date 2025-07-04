@@ -5,7 +5,7 @@ import { ClientScenario } from '../types/client.types';
 interface ClientState {
   selectedClient: ClientScenario | null;
   scenarios: ClientScenario[];
-  selectedYear: number;
+  selectedYear: number | null;
   isLoading: boolean;
   error: string | null;
 }
@@ -13,7 +13,7 @@ interface ClientState {
 interface ClientActions {
   setSelectedClient: (client: ClientScenario | null) => void;
   setScenarios: (scenarios: ClientScenario[]) => void;
-  setSelectedYear: (year: number) => void;
+  setSelectedYear: (year: number | null) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   clearSelectedClient: () => void;

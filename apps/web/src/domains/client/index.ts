@@ -8,4 +8,5 @@ export * from './services/client.service';
 export * from './hooks/useClient.hooks';
 
 // Store
-export * from './store/client.store'; 
+export * from './store/client.store';
+export * from './store/detailed-client.store'; 
