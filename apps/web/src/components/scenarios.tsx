@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { Search, Users, DollarSign, Building, ChevronRight, Loader2, AlertCircle, RefreshCw, User } from 'lucide-react';
+import { Search, Users, DollarSign, Building, ChevronRight, Loader2, AlertCircle, RefreshCw, User, Plus, FileText, X } from 'lucide-react';
 import { useClientScenarios, useRefreshScenarios } from '../domains/client/hooks/useClient.hooks';
 import { useClientStore, useSelectedClient, useSelectedYear } from '../domains/client/store/client.store';
 import { useDetailedClientStore } from '../domains/client/store/detailed-client.store';
@@ -11,11 +11,52 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Badge } from './ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
+import { Label } from './ui/label';
+
+// Enhanced scenario with income breakdown
+interface EnhancedClientScenario extends ClientScenario {
+  incomeBreakdown: {
+    w2: number;
+    k1: number;
+    other: number;
+  };
+  businessFilingTypes: string[];
+}
+
+// Custom scenario form data
+interface CustomScenarioData {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  incomes: Array<{
+    type: string;
+    amount: number;
+  }>;
+  businesses: Array<{
+    name: string;
+    filingType: string;
+    w2: number;
+    k1: number;
+  }>;
+  year: number;
+}
 
 export function Scenarios() {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'name' | 'income' | 'business'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [showCustomScenario, setShowCustomScenario] = useState(false);
+  const [customScenarioData, setCustomScenarioData] = useState<CustomScenarioData>({
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: '',
+    incomes: [{ type: 'W2', amount: 0 }],
+    businesses: [{ name: '', filingType: '', w2: 0, k1: 0 }],
+    year: new Date().getFullYear()
+  });
 
   const selectedYear = useSelectedYear();
   const { setSelectedClient, setSelectedYear } = useClientStore();
@@ -28,10 +69,83 @@ export function Scenarios() {
   const currentYear = new Date().getFullYear();
   const availableYears = Array.from({ length: 5 }, (_, i) => currentYear - i);
 
-  const filteredAndSortedScenarios = useMemo(() => {
+  // Filing types for businesses - matching database values
+  const filingTypes = [
+    { value: 'llc', label: 'LLC' },
+    { value: 's_corp', label: 'S-Corp' },
+    { value: 'c_corp', label: 'C-Corp' },
+    { value: 'partnership', label: 'Partnership' },
+    { value: 'sole_proprietorships', label: 'Sole Proprietorship' },
+    { value: 'schedule_c', label: 'Schedule C' }
+  ];
+
+  // Enhanced scenario processing with income breakdown
+  const enhancedScenarios = useMemo(() => {
     if (!scenarios || !Array.isArray(scenarios)) return [];
 
-    let filtered = scenarios.filter(scenario => {
+    const enhanced = scenarios.map(scenario => {
+      // Calculate income breakdown from both income records and business records
+      const w2IncomeFromRecords = scenario.client.incomes?.filter(income => 
+        income.incomeType?.toLowerCase().includes('w2') || 
+        income.incomeType?.toLowerCase().includes('wages')
+      ).reduce((sum, income) => sum + income.amount, 0) || 0;
+
+      const k1IncomeFromRecords = scenario.client.incomes?.filter(income => 
+        income.incomeType?.toLowerCase().includes('k1') || 
+        income.incomeType?.toLowerCase().includes('k-1')
+      ).reduce((sum, income) => sum + income.amount, 0) || 0;
+
+      const otherIncome = scenario.client.incomes?.filter(income => 
+        !income.incomeType?.toLowerCase().includes('w2') && 
+        !income.incomeType?.toLowerCase().includes('wages') &&
+        !income.incomeType?.toLowerCase().includes('k1') &&
+        !income.incomeType?.toLowerCase().includes('k-1')
+      ).reduce((sum, income) => sum + income.amount, 0) || 0;
+
+      // Add business W2 and K1 income
+      const w2IncomeFromBusiness = scenario.client.businesses?.reduce((sum, business) => 
+        sum + (business.w2 || 0), 0) || 0;
+
+      const k1IncomeFromBusiness = scenario.client.businesses?.reduce((sum, business) => 
+        sum + (business.k1 || 0), 0) || 0;
+
+      // Combine income from both sources
+      const w2Income = w2IncomeFromRecords + w2IncomeFromBusiness;
+      const k1Income = k1IncomeFromRecords + k1IncomeFromBusiness;
+
+      // Get business filing types
+      const businessFilingTypes = scenario.client.businesses?.map(business => {
+        const filingType = business.filingType || 'unknown';
+        const typeMapping = filingTypes.find(type => type.value === filingType);
+        return typeMapping ? typeMapping.label : filingType;
+      }).filter(Boolean) || [];
+
+      // Calculate business revenue as W2 + K1 from income breakdown
+      const businessRevenue = w2Income + k1Income;
+      
+      // Calculate correct total income as sum of all income types
+      const correctedTotalIncome = w2Income + k1Income + otherIncome;
+
+      return {
+        ...scenario,
+        totalIncome: correctedTotalIncome, // Override with correct calculation
+        totalBusinessRevenue: businessRevenue,
+        incomeBreakdown: {
+          w2: w2Income,
+          k1: k1Income,
+          other: otherIncome
+        },
+        businessFilingTypes: [...new Set(businessFilingTypes)] // Remove duplicates
+      };
+    });
+
+    return enhanced;
+  }, [scenarios]);
+
+  const filteredAndSortedScenarios = useMemo(() => {
+    if (!enhancedScenarios || !Array.isArray(enhancedScenarios)) return [];
+
+    let filtered = enhancedScenarios.filter(scenario => {
       // Validate scenario structure
       if (!scenario || !scenario.client || !scenario.client.firstName || !scenario.client.lastName) {
         console.warn('Invalid scenario structure:', scenario);
@@ -74,13 +188,93 @@ export function Scenarios() {
       
       return sortOrder === 'asc' ? (aValue as number) - (bValue as number) : (bValue as number) - (aValue as number);
     });
-  }, [scenarios, searchTerm, sortBy, sortOrder]);
+  }, [enhancedScenarios, searchTerm, sortBy, sortOrder]);
 
-  const handleClientSelect = async (scenario: ClientScenario) => {
+  const handleClientSelect = async (scenario: EnhancedClientScenario) => {
     setSelectedClient(scenario);
-    // Load detailed client data
-    await loadClientData(scenario.client.id);
+    // Load detailed client data only for real clients (not custom scenarios)
+    if (scenario.client.id && !scenario.client.id.startsWith('custom-')) {
+      await loadClientData(scenario.client.id);
+    }
   };
+
+  const handleAddCustomScenario = async () => {
+    if (!customScenarioData.firstName.trim() || !customScenarioData.lastName.trim()) {
+      return;
+    }
+
+    try {
+      // Create the client first
+      const clientResponse = await ClientService.createClient({
+        firstName: customScenarioData.firstName,
+        lastName: customScenarioData.lastName,
+        email: customScenarioData.email || undefined,
+        phone: customScenarioData.phone || undefined,
+      });
+
+      if (!clientResponse) {
+        throw new Error('Failed to create client - no response returned');
+      }
+
+      // The API returns the client object directly
+      const clientId = clientResponse.id;
+        
+      if (!clientId) {
+        throw new Error('Failed to get client ID from response');
+      }
+
+      // Create income records
+      const incomePromises = customScenarioData.incomes
+        .filter(income => income.amount > 0)
+        .map(income => ClientService.createClientIncome({
+          clientId,
+          incomeType: income.type.toLowerCase().replace(' ', '_'),
+          amount: income.amount,
+          year: customScenarioData.year,
+          payer: income.type === 'W2' ? 'Custom Employer' : 'Custom Source',
+          taxPayer: `${customScenarioData.firstName} ${customScenarioData.lastName}`,
+        }));
+
+      // Create business records
+      const businessPromises = customScenarioData.businesses
+        .filter(business => business.name.trim() || business.w2 > 0 || business.k1 > 0)
+        .map(business => ClientService.createClientBusiness({
+          clientId,
+          name: business.name || 'Custom Business',
+          filingType: business.filingType && business.filingType.trim() ? business.filingType : undefined,
+          w2: business.w2 || 0,
+          k1: business.k1 || 0,
+          grossSales: business.w2 + business.k1,
+          year: customScenarioData.year,
+          industry: 'Custom',
+        }));
+
+      // Wait for all records to be created
+      await Promise.all([...incomePromises, ...businessPromises]);
+
+      // Refresh the scenarios list to show the new data
+      refreshScenarios();
+
+      // Reset the form
+      setShowCustomScenario(false);
+      setCustomScenarioData({
+        firstName: '',
+        lastName: '',
+        email: '',
+        phone: '',
+        incomes: [{ type: 'W2', amount: 0 }],
+        businesses: [{ name: '', filingType: '', w2: 0, k1: 0 }],
+        year: new Date().getFullYear()
+      });
+
+    } catch (error) {
+      console.error('Error creating custom scenario:', error);
+      // You might want to show an error message to the user here
+    }
+  };
+
+  // Custom scenarios are now saved to the database, so we don't need local removal
+  // If deletion is needed, it should be done through the API
 
   const formatCurrency = (amount: number) => {
     if (amount === 0) return '$0';
@@ -163,10 +357,257 @@ export function Scenarios() {
               )}
             </h1>
             <p className="text-muted-foreground max-w-2xl">
-              Explore and manage client tax scenarios with comprehensive income and business data analysis
+              Explore and manage client tax scenarios with comprehensive income breakdown and business filing analysis
             </p>
           </div>
           <div className="flex gap-2">
+            <Dialog open={showCustomScenario} onOpenChange={setShowCustomScenario}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Custom
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[500px]">
+                <DialogHeader>
+                  <DialogTitle>Add Custom Scenario</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="firstName">First Name</Label>
+                      <Input
+                        id="firstName"
+                        value={customScenarioData.firstName}
+                        onChange={(e) => setCustomScenarioData(prev => ({ ...prev, firstName: e.target.value }))}
+                        placeholder="Enter first name"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="lastName">Last Name</Label>
+                      <Input
+                        id="lastName"
+                        value={customScenarioData.lastName}
+                        onChange={(e) => setCustomScenarioData(prev => ({ ...prev, lastName: e.target.value }))}
+                        placeholder="Enter last name"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="email">Email</Label>
+                      <Input
+                        id="email"
+                        type="email"
+                        value={customScenarioData.email}
+                        onChange={(e) => setCustomScenarioData(prev => ({ ...prev, email: e.target.value }))}
+                        placeholder="Enter email"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="phone">Phone</Label>
+                      <Input
+                        id="phone"
+                        value={customScenarioData.phone}
+                        onChange={(e) => setCustomScenarioData(prev => ({ ...prev, phone: e.target.value }))}
+                        placeholder="Enter phone"
+                      />
+                    </div>
+                  </div>
+                                    <div className="space-y-4">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-medium">Income Sources</h4>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setCustomScenarioData(prev => ({
+                              ...prev,
+                              incomes: [...prev.incomes, { type: 'Other', amount: 0 }]
+                            }));
+                          }}
+                        >
+                          <Plus className="h-4 w-4 mr-1" />
+                          Add Income
+                        </Button>
+                      </div>
+                      {customScenarioData.incomes.map((income, index) => (
+                        <div key={index} className="grid grid-cols-3 gap-2">
+                          <select
+                            value={income?.type || ''}
+                            onChange={(e) => {
+                              const newIncomes = [...customScenarioData.incomes];
+                              if (newIncomes[index]) {
+                                newIncomes[index].type = e.target.value;
+                                setCustomScenarioData(prev => ({ ...prev, incomes: newIncomes }));
+                              }
+                            }}
+                            className="px-3 py-2 border rounded-md text-sm bg-background"
+                          >
+                            <option value="W2">W2 Wages</option>
+                            <option value="K1">K1 Income</option>
+                            <option value="1099">1099 Income</option>
+                            <option value="Interest">Interest</option>
+                            <option value="Dividends">Dividends</option>
+                            <option value="Capital Gains">Capital Gains</option>
+                            <option value="Rental">Rental Income</option>
+                            <option value="Other">Other Income</option>
+                          </select>
+                          <Input
+                            type="number"
+                            placeholder="Amount"
+                            value={income?.amount || 0}
+                            onChange={(e) => {
+                              const newIncomes = [...customScenarioData.incomes];
+                              if (newIncomes[index]) {
+                                newIncomes[index].amount = Number(e.target.value) || 0;
+                                setCustomScenarioData(prev => ({ ...prev, incomes: newIncomes }));
+                              }
+                            }}
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              const newIncomes = customScenarioData.incomes.filter((_, i) => i !== index);
+                              setCustomScenarioData(prev => ({ ...prev, incomes: newIncomes }));
+                            }}
+                            disabled={customScenarioData.incomes.length === 1}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                    
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-medium">Business Entities</h4>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setCustomScenarioData(prev => ({
+                              ...prev,
+                              businesses: [...prev.businesses, { name: '', filingType: '', w2: 0, k1: 0 }]
+                            }));
+                          }}
+                        >
+                          <Plus className="h-4 w-4 mr-1" />
+                          Add Business
+                        </Button>
+                      </div>
+                      {customScenarioData.businesses.map((business, index) => (
+                        <div key={index} className="space-y-2 p-3 border rounded-md">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-sm font-medium">Business {index + 1}</Label>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                const newBusinesses = customScenarioData.businesses.filter((_, i) => i !== index);
+                                setCustomScenarioData(prev => ({ ...prev, businesses: newBusinesses }));
+                              }}
+                              disabled={customScenarioData.businesses.length === 1}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <Input
+                              placeholder="Business Name"
+                              value={business?.name || ''}
+                              onChange={(e) => {
+                                const newBusinesses = [...customScenarioData.businesses];
+                                if (newBusinesses[index]) {
+                                  newBusinesses[index].name = e.target.value;
+                                  setCustomScenarioData(prev => ({ ...prev, businesses: newBusinesses }));
+                                }
+                              }}
+                            />
+                            <select
+                              value={business?.filingType || ''}
+                              onChange={(e) => {
+                                const newBusinesses = [...customScenarioData.businesses];
+                                if (newBusinesses[index]) {
+                                  newBusinesses[index].filingType = e.target.value;
+                                  setCustomScenarioData(prev => ({ ...prev, businesses: newBusinesses }));
+                                }
+                              }}
+                              className="px-3 py-2 border rounded-md text-sm bg-background"
+                            >
+                              <option value="">Select filing type</option>
+                              {filingTypes.map(type => (
+                                <option key={type.value} value={type.value}>{type.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="space-y-1">
+                              <Label className="text-xs">W2 Income</Label>
+                              <Input
+                                type="number"
+                                placeholder="0"
+                                value={business?.w2 || 0}
+                                onChange={(e) => {
+                                  const newBusinesses = [...customScenarioData.businesses];
+                                  if (newBusinesses[index]) {
+                                    newBusinesses[index].w2 = Number(e.target.value) || 0;
+                                    setCustomScenarioData(prev => ({ ...prev, businesses: newBusinesses }));
+                                  }
+                                }}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">K1 Income</Label>
+                              <Input
+                                type="number"
+                                placeholder="0"
+                                value={business?.k1 || 0}
+                                onChange={(e) => {
+                                  const newBusinesses = [...customScenarioData.businesses];
+                                  if (newBusinesses[index]) {
+                                    newBusinesses[index].k1 = Number(e.target.value) || 0;
+                                    setCustomScenarioData(prev => ({ ...prev, businesses: newBusinesses }));
+                                  }
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="year">Tax Year</Label>
+                      <select
+                        id="year"
+                        value={customScenarioData.year.toString()}
+                        onChange={(e) => setCustomScenarioData(prev => ({ ...prev, year: Number(e.target.value) }))}
+                        className="px-3 py-2 border rounded-md text-sm bg-background w-full"
+                      >
+                        {availableYears.map(year => (
+                          <option key={year} value={year.toString()}>{year}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" onClick={() => setShowCustomScenario(false)}>
+                      Cancel
+                    </Button>
+                    <Button onClick={handleAddCustomScenario}>
+                      Add Scenario
+                    </Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
             <Button 
               onClick={() => ClientService.testApiConnections()} 
               variant="outline" 
@@ -226,21 +667,21 @@ export function Scenarios() {
       </div>
 
       {/* Summary Statistics */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card className="shadow-sm border-primary/20">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <div className="p-2 bg-primary/10 rounded-lg">
-                <Users className="h-6 w-6 text-primary" />
+          <CardContent className="p-8">
+            <div className="flex items-center gap-6">
+              <div className="p-3 bg-primary/10 rounded-lg">
+                <Users className="h-8 w-8 text-primary" />
               </div>
-              <div className="space-y-1">
+              <div className="space-y-2">
                 <p className="text-sm font-medium text-muted-foreground">
                   Total Clients
                 </p>
-                                 <p className="text-2xl font-bold">
-                   {formatLargeNumber(filteredAndSortedScenarios.length)}
-                 </p>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-3xl font-bold">
+                  {formatLargeNumber(filteredAndSortedScenarios.length)}
+                </p>
+                <p className="text-sm text-muted-foreground">
                   {selectedYear ? `in ${selectedYear}` : 'all years'}
                 </p>
               </div>
@@ -249,19 +690,19 @@ export function Scenarios() {
         </Card>
 
         <Card className="shadow-sm border-green-500/20">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <div className="p-2 bg-green-500/10 rounded-lg">
-                <DollarSign className="h-6 w-6 text-green-600" />
+          <CardContent className="p-8">
+            <div className="flex items-center gap-6">
+              <div className="p-3 bg-green-500/10 rounded-lg">
+                <DollarSign className="h-8 w-8 text-green-600" />
               </div>
-              <div className="space-y-1">
+              <div className="space-y-2">
                 <p className="text-sm font-medium text-muted-foreground">
                   Total Income
                 </p>
-                <p className="text-2xl font-bold text-green-600">
+                <p className="text-3xl font-bold text-green-600">
                   {formatCurrency(filteredAndSortedScenarios.reduce((sum, s) => sum + s.totalIncome, 0))}
                 </p>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-sm text-muted-foreground">
                   {selectedYear ? `in ${selectedYear}` : 'all years'}
                 </p>
               </div>
@@ -270,19 +711,19 @@ export function Scenarios() {
         </Card>
 
         <Card className="shadow-sm border-purple-500/20">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <div className="p-2 bg-purple-500/10 rounded-lg">
-                <Building className="h-6 w-6 text-purple-600" />
+          <CardContent className="p-8">
+            <div className="flex items-center gap-6">
+              <div className="p-3 bg-purple-500/10 rounded-lg">
+                <Building className="h-8 w-8 text-purple-600" />
               </div>
-              <div className="space-y-1">
+              <div className="space-y-2">
                 <p className="text-sm font-medium text-muted-foreground">
-                  Business Revenue
+                  Business Revenue (W2+K1)
                 </p>
-                <p className="text-2xl font-bold text-purple-600">
+                <p className="text-3xl font-bold text-purple-600">
                   {formatCurrency(filteredAndSortedScenarios.reduce((sum, s) => sum + s.totalBusinessRevenue, 0))}
                 </p>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-sm text-muted-foreground">
                   {selectedYear ? `in ${selectedYear}` : 'all years'}
                 </p>
               </div>
@@ -291,19 +732,19 @@ export function Scenarios() {
         </Card>
 
         <Card className="shadow-sm border-orange-500/20">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <div className="p-2 bg-orange-500/10 rounded-lg">
-                <Building className="h-6 w-6 text-orange-600" />
+          <CardContent className="p-8">
+            <div className="flex items-center gap-6">
+              <div className="p-3 bg-orange-500/10 rounded-lg">
+                <Building className="h-8 w-8 text-orange-600" />
               </div>
-              <div className="space-y-1">
+              <div className="space-y-2">
                 <p className="text-sm font-medium text-muted-foreground">
                   Total Businesses
                 </p>
-                <p className="text-2xl font-bold text-orange-600">
+                <p className="text-3xl font-bold text-orange-600">
                   {formatLargeNumber(filteredAndSortedScenarios.reduce((sum, s) => sum + (s.businessCount || 0), 0))}
                 </p>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-sm text-muted-foreground">
                   {selectedYear ? `in ${selectedYear}` : 'all years'}
                 </p>
               </div>
@@ -315,20 +756,47 @@ export function Scenarios() {
       {/* Selected Client Banner */}
       {selectedClient && (
         <Card className="bg-primary/5 border-primary/30 shadow-sm">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <div className="p-2 bg-primary/10 rounded-lg">
-                <User className="h-6 w-6 text-primary" />
+          <CardContent className="p-8">
+            <div className="flex items-center gap-6">
+              <div className="p-3 bg-primary/10 rounded-lg">
+                <User className="h-8 w-8 text-primary" />
               </div>
-              <div className="flex-1 space-y-1">
-                <h3 className="font-semibold text-primary">
+              <div className="flex-1 space-y-4">
+                <h3 className="text-xl font-semibold text-primary">
                   Selected: {selectedClient.client.firstName} {selectedClient.client.lastName}
                 </h3>
-                <div className="flex gap-6 text-sm text-muted-foreground">
-                  <span>Income: <span className="font-medium text-green-600">{formatCurrency(selectedClient.totalIncome)}</span></span>
-                  <span>Business: <span className="font-medium text-purple-600">{formatCurrency(selectedClient.totalBusinessRevenue)}</span></span>
-                  <span>Records: <span className="font-medium">{selectedClient.incomeCount}</span></span>
-                  <span>Businesses: <span className="font-medium">{selectedClient.businessCount}</span></span>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-muted-foreground">
+                  <div className="space-y-1">
+                    <p>Total Income</p>
+                    <p className="font-semibold text-green-600 text-lg">{formatCurrency(selectedClient.totalIncome)}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p>Business (W2+K1)</p>
+                    <p className="font-semibold text-purple-600 text-lg">{formatCurrency(selectedClient.totalBusinessRevenue)}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p>Records</p>
+                    <p className="font-semibold text-lg">{selectedClient.incomeCount}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p>Businesses</p>
+                    <p className="font-semibold text-lg">{selectedClient.businessCount}</p>
+                  </div>
+                </div>
+                {/* Income Breakdown */}
+                <div className="flex gap-4">
+                  <div className="bg-blue-100 px-4 py-2 rounded-lg">
+                    <p className="text-sm font-medium text-blue-600">W2</p>
+                    <p className="text-blue-800 font-semibold">{formatCurrency((selectedClient as EnhancedClientScenario).incomeBreakdown?.w2 || 0)}</p>
+                  </div>
+                  <div className="bg-green-100 px-4 py-2 rounded-lg">
+                    <p className="text-sm font-medium text-green-600">K1</p>
+                    <p className="text-green-800 font-semibold">{formatCurrency((selectedClient as EnhancedClientScenario).incomeBreakdown?.k1 || 0)}</p>
+                  </div>
+                  <div className="bg-gray-100 px-4 py-2 rounded-lg">
+                    <p className="text-sm font-medium text-gray-600">Other</p>
+                    <p className="text-gray-800 font-semibold">{formatCurrency((selectedClient as EnhancedClientScenario).incomeBreakdown?.other || 0)}</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -344,7 +812,7 @@ export function Scenarios() {
           </h2>
         </div>
         
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {filteredAndSortedScenarios.map((scenario) => {
             if (!scenario?.client?.id) {
               console.warn('Invalid scenario in render:', scenario);
@@ -352,21 +820,27 @@ export function Scenarios() {
             }
             
             const isSelected = selectedClient?.client?.id === scenario.client.id;
+            const isCustom = scenario.client.id.startsWith('custom-');
             
             return (
               <Card
                 key={scenario.client.id}
                 className={`cursor-pointer transition-all hover:shadow-lg hover:scale-[1.02] ${
                   isSelected ? 'ring-2 ring-primary shadow-lg scale-[1.02]' : 'shadow-sm'
-                }`}
+                } ${isCustom ? 'border-l-4 border-l-blue-500' : ''}`}
                 onClick={() => handleClientSelect(scenario)}
               >
-                <CardHeader className="pb-4">
+                <CardHeader className="pb-6">
                   <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                      <CardTitle className="text-lg font-semibold">
-                        {scenario.client.firstName} {scenario.client.lastName}
-                      </CardTitle>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-3">
+                        <CardTitle className="text-xl font-semibold">
+                          {scenario.client.firstName} {scenario.client.lastName}
+                        </CardTitle>
+                        {isCustom && (
+                          <Badge variant="secondary" className="text-sm">Custom</Badge>
+                        )}
+                      </div>
                       <div className="space-y-1 text-sm text-muted-foreground">
                         {scenario.client.email && (
                           <p className="truncate">{scenario.client.email}</p>
@@ -376,40 +850,78 @@ export function Scenarios() {
                         )}
                       </div>
                     </div>
-                    <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                    <ChevronRight className="h-6 w-6 text-muted-foreground" />
                   </div>
                 </CardHeader>
                 
-                <CardContent className="pt-0 space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <p className="text-xs font-medium text-muted-foreground">Total Income</p>
-                      <p className="text-lg font-semibold text-green-600">
+                <CardContent className="pt-0 space-y-6">
+                  {/* Income Breakdown */}
+                  <div className="space-y-3">
+                    <p className="text-sm font-medium text-muted-foreground">Income Breakdown</p>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="bg-blue-50 p-3 rounded-lg text-center">
+                        <p className="font-medium text-blue-600 text-sm">W2</p>
+                        <p className="text-blue-800 font-semibold">{formatCurrency(scenario.incomeBreakdown.w2)}</p>
+                      </div>
+                      <div className="bg-green-50 p-3 rounded-lg text-center">
+                        <p className="font-medium text-green-600 text-sm">K1</p>
+                        <p className="text-green-800 font-semibold">{formatCurrency(scenario.incomeBreakdown.k1)}</p>
+                      </div>
+                      <div className="bg-gray-50 p-3 rounded-lg text-center">
+                        <p className="font-medium text-gray-600 text-sm">Other</p>
+                        <p className="text-gray-800 font-semibold">{formatCurrency(scenario.incomeBreakdown.other)}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium text-muted-foreground">Total Income</p>
+                      <p className="text-xl font-semibold text-green-600">
                         {formatCurrency(scenario.totalIncome)}
                       </p>
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-xs font-medium text-muted-foreground">Business Revenue</p>
-                      <p className="text-lg font-semibold text-purple-600">
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium text-muted-foreground">Business (W2+K1)</p>
+                      <p className="text-xl font-semibold text-purple-600">
                         {formatCurrency(scenario.totalBusinessRevenue)}
                       </p>
                     </div>
                   </div>
-                  
-                  <div className="flex gap-4 pt-2 border-t">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1 bg-blue-500/10 rounded">
-                        <DollarSign className="h-3 w-3 text-blue-600" />
+
+                  {/* Business Filing Types */}
+                  {scenario.businessFilingTypes.length > 0 && (
+                    <div className="space-y-3">
+                      <p className="text-sm font-medium text-muted-foreground">Filing Types</p>
+                      <div className="flex flex-wrap gap-2">
+                        {scenario.businessFilingTypes.map((type: string, index: number) => (
+                          <Badge key={index} variant="outline" className="text-sm">
+                            <FileText className="h-4 w-4 mr-2" />
+                            {type}
+                          </Badge>
+                        ))}
                       </div>
-                      <span className="text-sm font-medium">{scenario.incomeCount}</span>
-                      <span className="text-xs text-muted-foreground">incomes</span>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <div className="p-1 bg-orange-500/10 rounded">
-                        <Building className="h-3 w-3 text-orange-600" />
+                  )}
+                  
+                  <div className="flex gap-6 pt-4 border-t">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-blue-500/10 rounded-lg">
+                        <DollarSign className="h-4 w-4 text-blue-600" />
                       </div>
-                      <span className="text-sm font-medium">{scenario.businessCount}</span>
-                      <span className="text-xs text-muted-foreground">businesses</span>
+                      <div className="text-center">
+                        <p className="text-lg font-semibold">{scenario.incomeCount}</p>
+                        <p className="text-sm text-muted-foreground">records</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-orange-500/10 rounded-lg">
+                        <Building className="h-4 w-4 text-orange-600" />
+                      </div>
+                      <div className="text-center">
+                        <p className="text-lg font-semibold">{scenario.businessCount}</p>
+                        <p className="text-sm text-muted-foreground">businesses</p>
+                      </div>
                     </div>
                   </div>
                 </CardContent>

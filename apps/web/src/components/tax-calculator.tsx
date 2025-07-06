@@ -19,6 +19,9 @@ import {
   AccordionTrigger
 } from '@/components/ui/accordion';
 import { cn } from '@/lib/utils';
+import { useSelectedClient } from '../domains/client/store/client.store';
+import { User, DollarSign, Building, FileText } from 'lucide-react';
+import { Badge } from './ui/badge';
 
 interface TaxDetailFieldProps {
   title: string;
@@ -61,6 +64,7 @@ interface TaxData {
 
 export function TaxCalculator() {
   const [isOpen, setIsOpen] = useState(false);
+  const selectedClient = useSelectedClient();
   const [taxData, setTaxData] = useState<TaxData>({
     // Income fields
     wages: 0,
@@ -108,6 +112,26 @@ export function TaxCalculator() {
     return value.toLocaleString();
   };
 
+  const formatCurrency = (amount: number) => {
+    if (amount === 0) return '$0';
+    
+    // Format large numbers with K, M, B suffixes
+    if (amount >= 1000000000) {
+      return `$${(amount / 1000000000).toFixed(1)}B`;
+    } else if (amount >= 1000000) {
+      return `$${(amount / 1000000).toFixed(1)}M`;
+    } else if (amount >= 1000) {
+      return `$${(amount / 1000).toFixed(1)}K`;
+    }
+    
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  };
+
   const incomeFields = [
     { title: 'Wages', name: 'wages', readOnly: true },
     { title: 'Interest', name: 'interest', readOnly: true },
@@ -142,6 +166,49 @@ export function TaxCalculator() {
     { title: isRefund ? 'Refund' : 'Balance Due', name: 'refund_balance', readOnly: true },
   ];
 
+  // Calculate income breakdown if client is selected
+  const getIncomeBreakdown = () => {
+    if (!selectedClient) return null;
+
+    // Calculate income breakdown from both income records and business records
+    const w2IncomeFromRecords = selectedClient.client.incomes?.filter(income => 
+      income.incomeType?.toLowerCase().includes('w2') || 
+      income.incomeType?.toLowerCase().includes('wages')
+    ).reduce((sum, income) => sum + income.amount, 0) || 0;
+
+    const k1IncomeFromRecords = selectedClient.client.incomes?.filter(income => 
+      income.incomeType?.toLowerCase().includes('k1') || 
+      income.incomeType?.toLowerCase().includes('k-1')
+    ).reduce((sum, income) => sum + income.amount, 0) || 0;
+
+    const otherIncome = selectedClient.client.incomes?.filter(income => 
+      !income.incomeType?.toLowerCase().includes('w2') && 
+      !income.incomeType?.toLowerCase().includes('wages') &&
+      !income.incomeType?.toLowerCase().includes('k1') &&
+      !income.incomeType?.toLowerCase().includes('k-1')
+    ).reduce((sum, income) => sum + income.amount, 0) || 0;
+
+    // Add business W2 and K1 income
+    const w2IncomeFromBusiness = selectedClient.client.businesses?.reduce((sum, business) => 
+      sum + (business.w2 || 0), 0) || 0;
+
+    const k1IncomeFromBusiness = selectedClient.client.businesses?.reduce((sum, business) => 
+      sum + (business.k1 || 0), 0) || 0;
+
+    // Combine income from both sources
+    const w2Income = w2IncomeFromRecords + w2IncomeFromBusiness;
+    const k1Income = k1IncomeFromRecords + k1IncomeFromBusiness;
+
+    return {
+      w2: w2Income,
+      k1: k1Income,
+      other: otherIncome,
+      total: w2Income + k1Income + otherIncome
+    };
+  };
+
+  const incomeBreakdown = getIncomeBreakdown();
+
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-8">
       <div className="text-center space-y-4">
@@ -150,6 +217,87 @@ export function TaxCalculator() {
           Calculate your tax liability with our custom themed calculator
         </p>
       </div>
+
+      {/* Client Summary */}
+      {selectedClient && incomeBreakdown && (
+        <Card className="bg-primary/5 border-primary/30 shadow-sm">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-primary">
+              <User className="h-5 w-5" />
+              Client Summary
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="space-y-2">
+              <h3 className="text-xl font-semibold">
+                {selectedClient.client.firstName} {selectedClient.client.lastName}
+              </h3>
+              <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+                {selectedClient.client.email && (
+                  <span>{selectedClient.client.email}</span>
+                )}
+                {selectedClient.client.phone && (
+                  <span>{selectedClient.client.phone}</span>
+                )}
+              </div>
+            </div>
+
+            {/* Income Breakdown */}
+            <div className="space-y-3">
+              <h4 className="font-medium text-muted-foreground">Income Breakdown</h4>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="bg-blue-50 p-4 rounded-lg text-center">
+                  <p className="font-medium text-blue-600 text-sm">W2 Income</p>
+                  <p className="text-blue-800 font-semibold text-lg">{formatCurrency(incomeBreakdown.w2)}</p>
+                </div>
+                <div className="bg-green-50 p-4 rounded-lg text-center">
+                  <p className="font-medium text-green-600 text-sm">K1 Income</p>
+                  <p className="text-green-800 font-semibold text-lg">{formatCurrency(incomeBreakdown.k1)}</p>
+                </div>
+                <div className="bg-gray-50 p-4 rounded-lg text-center">
+                  <p className="font-medium text-gray-600 text-sm">Other Income</p>
+                  <p className="text-gray-800 font-semibold text-lg">{formatCurrency(incomeBreakdown.other)}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Summary Stats */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t">
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Total Income</p>
+                <p className="font-semibold text-green-600 text-lg">{formatCurrency(incomeBreakdown.total)}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Business Revenue</p>
+                <p className="font-semibold text-purple-600 text-lg">{formatCurrency(incomeBreakdown.w2 + incomeBreakdown.k1)}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Income Records</p>
+                <p className="font-semibold text-lg">{selectedClient.incomeCount}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Businesses</p>
+                <p className="font-semibold text-lg">{selectedClient.businessCount}</p>
+              </div>
+            </div>
+
+            {/* Business Filing Types */}
+            {selectedClient.client.businesses && selectedClient.client.businesses.length > 0 && (
+              <div className="space-y-3">
+                <h4 className="font-medium text-muted-foreground">Business Filing Types</h4>
+                <div className="flex flex-wrap gap-2">
+                  {selectedClient.client.businesses.map((business, index) => (
+                    <Badge key={index} variant="outline" className="text-sm">
+                      <FileText className="h-3 w-3 mr-1" />
+                      {business.filingType || 'Unknown'}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
