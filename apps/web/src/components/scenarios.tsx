@@ -95,12 +95,14 @@ export function Scenarios() {
         income.incomeType?.toLowerCase().includes('k-1')
       ).reduce((sum, income) => sum + income.amount, 0) || 0;
 
-      const otherIncome = scenario.client.incomes?.filter(income => 
-        !income.incomeType?.toLowerCase().includes('w2') && 
-        !income.incomeType?.toLowerCase().includes('wages') &&
-        !income.incomeType?.toLowerCase().includes('k1') &&
-        !income.incomeType?.toLowerCase().includes('k-1')
-      ).reduce((sum, income) => sum + income.amount, 0) || 0;
+      const otherIncome = scenario.client.incomes?.filter(income => {
+        const incomeType = income.incomeType?.toLowerCase() || '';
+        // Exclude W2 and K1 income, include everything else (capital gains, dividends, interest, etc.)
+        return !incomeType.includes('w2') && 
+               !incomeType.includes('wages') &&
+               !incomeType.includes('k1') &&
+               !incomeType.includes('k-1');
+      }).reduce((sum, income) => sum + income.amount, 0) || 0;
 
       // Add business W2 and K1 income
       const w2IncomeFromBusiness = scenario.client.businesses?.reduce((sum, business) => 
@@ -452,6 +454,7 @@ export function Scenarios() {
                             <option value="Interest">Interest</option>
                             <option value="Dividends">Dividends</option>
                             <option value="Capital Gains">Capital Gains</option>
+                            <option value="Capital Gains Long Term">Long Term Capital Gains</option>
                             <option value="Rental">Rental Income</option>
                             <option value="Other">Other Income</option>
                           </select>

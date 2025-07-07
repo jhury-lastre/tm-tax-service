@@ -95,6 +95,8 @@ export function TaxCalculator() {
     refund_balance: 0,
   });
 
+  console.log(selectedClient);
+
   const handleChange = (name: string, value: string) => {
     const numericValue = value === '' ? 0 : Number(value);
     setTaxData(prev => ({
@@ -170,6 +172,12 @@ export function TaxCalculator() {
   const getIncomeBreakdown = () => {
     if (!selectedClient) return null;
 
+    // Debug: Log all income types for this client
+    console.log('Client incomes:', selectedClient.client.incomes?.map(income => ({
+      type: income.incomeType,
+      amount: income.amount
+    })));
+
     // Calculate income breakdown from both income records and business records
     const w2IncomeFromRecords = selectedClient.client.incomes?.filter(income => 
       income.incomeType?.toLowerCase().includes('w2') || 
@@ -181,12 +189,22 @@ export function TaxCalculator() {
       income.incomeType?.toLowerCase().includes('k-1')
     ).reduce((sum, income) => sum + income.amount, 0) || 0;
 
-    const otherIncome = selectedClient.client.incomes?.filter(income => 
-      !income.incomeType?.toLowerCase().includes('w2') && 
-      !income.incomeType?.toLowerCase().includes('wages') &&
-      !income.incomeType?.toLowerCase().includes('k1') &&
-      !income.incomeType?.toLowerCase().includes('k-1')
-    ).reduce((sum, income) => sum + income.amount, 0) || 0;
+    const otherIncomeRecords = selectedClient.client.incomes?.filter(income => {
+      const incomeType = income.incomeType?.toLowerCase() || '';
+      // Exclude W2 and K1 income, include everything else (capital gains, long term capital gains, dividends, interest, etc.)
+      return !incomeType.includes('w2') && 
+             !incomeType.includes('wages') &&
+             !incomeType.includes('k1') &&
+             !incomeType.includes('k-1');
+    }) || [];
+
+    // Debug: Log other income types being included
+    console.log('Other income records:', otherIncomeRecords.map(income => ({
+      type: income.incomeType,
+      amount: income.amount
+    })));
+
+    const otherIncome = otherIncomeRecords.reduce((sum, income) => sum + income.amount, 0);
 
     // Add business W2 and K1 income
     const w2IncomeFromBusiness = selectedClient.client.businesses?.reduce((sum, business) => 
